@@ -26,6 +26,8 @@ The following steps will clone this git repository and compile the unikernel:
 
 ```bash
 $ git clone https://github.com/roburio/dns-primary-git.git
+$ opam repo add git-ssh git+https://github.com/roburio/git-ssh-dns-mirage3-repo.git
+$ cd dns-primary-git
 $ mirage configure -t <your-favourite-target>
 $ make depend
 $ make

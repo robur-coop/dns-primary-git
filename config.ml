@@ -10,6 +10,14 @@ let axfr =
   let doc = Key.Arg.info ~doc:"Allow unauthenticated zone transfer." ["axfr"] in
   Key.(create "axfr" Arg.(flag doc))
 
+let seed =
+  let doc = Key.Arg.info ~doc:"Seed for private key." ["seed"] in
+  Key.(create "seed" Arg.(opt string "" doc))
+
+let authenticator =
+  let doc = Key.Arg.info ~doc:"Authenticator." ["authenticator"] in
+  Key.(create "authenticator" Arg.(opt string "" doc))
+
 let dns_handler =
   let packages = [
     package "logs" ;
@@ -17,10 +25,17 @@ let dns_handler =
     package "dns-tsig";
     package ~min:"2.0.0" "irmin-mirage";
     package ~min:"2.0.0" "irmin-mirage-git";
-    package "conduit-mirage";
+    package "awa";
+    package "awa-mirage";
+    package ~min:"2.2.98" "conduit";
+    package ~min:"2.2.98" "conduit-lwt";
+    package ~min:"2.2.98" "conduit-mirage";
+    package ~min:"2.98.0" "git";
+    package ~min:"2.98.0" "git-http";
+    package ~min:"2.98.0" "git-mirage";
   ] in
   foreign
-    ~keys:[Key.abstract remote_k ; Key.abstract axfr]
+    ~keys:[Key.abstract remote_k ; Key.abstract axfr ; Key.abstract seed ; Key.abstract authenticator]
     ~packages
     "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> stackv4 @-> resolver @-> conduit @-> job)
