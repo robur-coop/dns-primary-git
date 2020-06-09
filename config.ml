@@ -10,6 +10,18 @@ let axfr =
   let doc = Key.Arg.info ~doc:"Allow unauthenticated zone transfer." ["axfr"] in
   Key.(create "axfr" Arg.(flag doc))
 
+let seed =
+  let doc = Key.Arg.info ~doc:"Seed for private key." ["seed"] in
+  Key.(create "seed" Arg.(opt string "" doc))
+
+let authenticator =
+  let doc = Key.Arg.info ~doc:"Authenticator." ["authenticator"] in
+  Key.(create "authenticator" Arg.(opt string "" doc))
+
+let awa_pin = "git+https://github.com/hannesm/awa-ssh.git#future"
+and git_pin = "git+https://github.com/hannesm/ocaml-git.git#awa-future"
+and conduit_pin = "git+https://github.com/hannesm/ocaml-conduit.git#awa-future"
+
 let dns_handler =
   let packages = [
     package "logs" ;
@@ -17,10 +29,17 @@ let dns_handler =
     package "dns-tsig";
     package ~min:"2.0.0" "irmin-mirage";
     package ~min:"2.0.0" "irmin-mirage-git";
-    package "conduit-mirage";
+    package ~pin:awa_pin "awa";
+    package ~pin:awa_pin "awa-mirage";
+    package ~pin:conduit_pin "conduit";
+    package ~pin:conduit_pin "conduit-lwt";
+    package ~pin:conduit_pin "conduit-mirage";
+    package ~pin:git_pin "git";
+    package ~pin:git_pin "git-http";
+    package ~pin:git_pin "git-mirage";
   ] in
   foreign
-    ~keys:[Key.abstract remote_k ; Key.abstract axfr]
+    ~keys:[Key.abstract remote_k ; Key.abstract axfr ; Key.abstract seed ; Key.abstract authenticator]
     ~packages
     "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> stackv4 @-> resolver @-> conduit @-> job)
