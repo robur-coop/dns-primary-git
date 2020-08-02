@@ -18,6 +18,18 @@ let authenticator =
   let doc = Key.Arg.info ~doc:"SSH authenticator." ["authenticator"] in
   Key.(create "authenticator" Arg.(opt (some string) None doc))
 
+let monitor =
+  let doc = Key.Arg.info ~doc:"monitor host IP" ["monitor"] in
+  Key.(create "monitor" Arg.(opt (some ip_address) None doc))
+
+let syslog =
+  let doc = Key.Arg.info ~doc:"syslog host IP" ["syslog"] in
+  Key.(create "syslog" Arg.(opt (some ip_address) None doc))
+
+let name =
+  let doc = Key.Arg.info ~doc:"Name of the unikernel" ["name"] in
+  Key.(create "name" Arg.(opt string "ns.nqsb.io" doc))
+
 let dns_handler =
   let packages = [
     package "logs";
@@ -25,12 +37,17 @@ let dns_handler =
     package "dns-tsig";
     package ~min:"0.0.3" "git-kv";
     package ~min:"4.3.1" "mirage-runtime";
+    package "mirage-monitoring";
+    package ~sublibs:["mirage"] ~min:"0.3.0" "logs-syslog";
   ] in
   foreign
-    ~keys:[ Key.v remote_k; Key.v axfr ]
+    ~keys:[
+      Key.v remote_k; Key.v axfr ;
+      Key.v name ; Key.v monitor ; Key.v syslog ;
+    ]
     ~packages
     "Unikernel.Main"
-    (random @-> pclock @-> mclock @-> time @-> stackv4v6 @-> git_client @-> job)
+    (console @-> random @-> pclock @-> mclock @-> time @-> stackv4v6 @-> git_client @-> stackv4v6 @-> job)
 
 let net = generic_stackv4v6 default_network
 
@@ -42,7 +59,9 @@ let git =
     (merge_git_clients (git_ssh ~key:ssh_key ~authenticator tcp git)
                        (git_http tcp git))
 
+let management_stack = generic_stackv4v6 ~group:"management" (netif ~group:"management" "management")
+
 let () =
   register "primary-git"
-    [dns_handler $ default_random $ default_posix_clock $ default_monotonic_clock $
-     default_time $ net $ git]
+    [dns_handler $ default_console $ default_random $ default_posix_clock $ default_monotonic_clock $
+     default_time $ net $ git $ management_stack]

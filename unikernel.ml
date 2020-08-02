@@ -2,9 +2,38 @@
 
 open Lwt.Infix
 
-module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
-
+module Main (C : Mirage_console.S) (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) (Management : Tcpip.Stack.V4V6) = struct
   module Store = Git_kv.Make(P)
+
+  let counters =
+    Mirage_monitoring.counter_metrics ~f:(fun x -> x) "primary-dns"
+
+  let inc c = Metrics.add counters (fun x -> x) (fun d -> d c)
+
+  let set_zone_counter =
+    let s = ref (0, 0, 0, 0) in
+    let open Metrics in
+    let doc = "zone statistics" in
+    let data () =
+      let pull, push, active, key = !s in
+      Data.v [
+        int "zones pulled" pull ;
+        int "zones pushed" push ;
+        int "active zones" active ;
+        int "active nsupdate keys" key ;
+      ] in
+    let src = Src.v ~doc ~tags:Tags.[] ~data "dns-zones" in
+    (fun action n ->
+       let pull, push, active, key = !s in
+       let s' =
+         match action with
+         | `Pull -> n, push, active, key
+         | `Push -> pull, n, active, key
+         | `Active -> pull, push, n, key
+         | `Key -> pull, push, active, n
+       in
+       s := s';
+       add src (fun x -> x) (fun d -> d ()))
 
   let zones store =
     Store.list store Mirage_kv.Key.empty >|= function
@@ -32,6 +61,9 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
         | Ok data -> (Mirage_kv.Key.basename key, data) :: acc)
       [] zone_keys >|= fun bindings ->
     let zones, trie, keys = Dns_zone.decode_zones_keys bindings in
+    set_zone_counter `Pull (List.length bindings);
+    set_zone_counter `Active (Domain_name.Set.cardinal zones);
+    set_zone_counter `Key (List.length keys);
     (match old_trie with
      | None -> ()
      | Some old_trie ->
@@ -91,6 +123,9 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     let message = Fmt.str "changed by %a" Ipaddr.pp ip
     and author = Fmt.str "%a via primary git" Fmt.(option ~none:(any "no key") Domain_name.pp) key
     in
+    set_zone_counter `Push (List.length zones);
+    set_zone_counter `Active (List.length zones);
+    inc "push";
     Store.change_and_push store ~author ~message
       (fun s ->
          Domain_name.Set.fold (fun name acc ->
@@ -118,9 +153,19 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
       Logs.err (fun m -> m "change_and_push failed with %a" Store.pp_write_error e)
 
   module D = Dns_server_mirage.Make(P)(M)(T)(S)
+  module Monitoring = Mirage_monitoring.Make(T)(P)(Management)
+  module Syslog = Logs_syslog_mirage.Udp(C)(P)(Management)
 
-  let start _rng _pclock _mclock _time s ctx =
+  let start c _rng _pclock _mclock _time s ctx management =
+    let hostname = Key_gen.name () in
+    (match Key_gen.syslog () with
+     | None -> Logs.warn (fun m -> m "no syslog specified, dumping on stdout")
+     | Some ip -> Logs.set_reporter (Syslog.create c management ip ~hostname ()));
+    (match Key_gen.monitor () with
+     | None -> Logs.warn (fun m -> m "no monitor specified, not outputting statistics")
+     | Some ip -> Monitoring.create ~hostname ip management);
     Lwt.catch (fun () ->
+        inc "pull";
         Git_kv.connect ctx (Key_gen.remote ()))
       (function
         | Invalid_argument err ->
@@ -142,6 +187,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
           Lwt.return None
         | `Signed_notify soa ->
           Logs.debug (fun m -> m "got notified, checking out %a" Fmt.(option ~none:(any "no soa") Dns.Soa.pp) soa);
+          inc "pull";
           Git_kv.pull store >>= function
           | Error (`Msg msg) ->
             Logs.err (fun m -> m "error %s while pulling git in notify, continuing with old data" msg);
