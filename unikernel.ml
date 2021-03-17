@@ -4,15 +4,15 @@
 
 open Lwt.Infix
 
-module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Mirage_stack.V4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S) = struct
+module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Mirage_stack.V4) (_ : sig end) (_: Resolver_lwt.S) (_: Conduit_mirage.S) = struct
 
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
 
-  let connect_store resolver conduit =
+  let connect_store ctx =
     let config = Irmin_mem.config () in
     Store.Repo.v config >>= Store.master >|= fun repo ->
-    repo, Store.remote ~conduit ~resolver (Key_gen.remote ())
+    repo, Store.remote ~ctx (Key_gen.remote ())
 
   let pull_store repo upstream =
     Logs.info (fun m -> m "pulling from remote!");
@@ -28,10 +28,10 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     Lwt_list.fold_left_s (fun acc (name, kind) ->
         match acc with
         | Error e -> Lwt.return (Error e)
-        | Ok acc -> match kind, Domain_name.of_string name with
-          | `Node, _ -> Lwt.return (Error (name, "got node, expected contents"))
-          | `Contents, Error (`Msg e) -> Lwt.return (Error (name, "not a domain name " ^ e))
-          | `Contents, Ok zone ->
+        | Ok acc -> match Store.Tree.destruct kind, Domain_name.of_string name with
+          | `Node _, _ -> Lwt.return (Error (name, "got node, expected contents"))
+          | `Contents _, Error (`Msg e) -> Lwt.return (Error (name, "not a domain name " ^ e))
+          | `Contents _, Ok zone ->
             Store.get store [name] >|= fun data ->
             Ok ((zone, data) :: acc))
       (Ok []) files
@@ -206,8 +206,9 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
 
   module D = Dns_server_mirage.Make(P)(M)(T)(S)
 
-  let start _rng _pclock _mclock _time s resolver conduit =
-    connect_store resolver conduit >>= fun (store, upstream) ->
+  let start _rng _pclock _mclock _time s ctx resolver conduit =
+    let ctx = Git_cohttp_mirage.with_conduit (Cohttp_mirage.Client.ctx resolver conduit) ctx in
+    connect_store ctx >>= fun (store, upstream) ->
     Logs.info (fun m -> m "i have now master!");
     load_git None store upstream >>= function
     | Error (`Msg msg) ->
