@@ -4,7 +4,7 @@
 
 open Lwt.Infix
 
-module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Mirage_stack.V4) (_ : sig end) (_: Resolver_lwt.S) (_: Conduit_mirage.S) = struct
+module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Mirage_stack.V4V6) (_ : sig end) = struct
 
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
@@ -173,7 +173,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     | Ok data ->
       let info () =
         let date = Int64.of_float Ptime.Span.(to_float_s (v (P.now_d_ps ())))
-        and commit = Fmt.strf "%a changed %a" Ipaddr.V4.pp ip Domain_name.pp zone
+        and commit = Fmt.strf "%a changed %a" Ipaddr.pp ip Domain_name.pp zone
         and author = Fmt.strf "%a via pimary git" Fmt.(option ~none:(unit "no key") Domain_name.pp) key
         in
         Irmin.Info.v ~date ~author commit
@@ -206,8 +206,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
 
   module D = Dns_server_mirage.Make(P)(M)(T)(S)
 
-  let start _rng _pclock _mclock _time s ctx resolver conduit =
-    let ctx = Git_cohttp_mirage.with_conduit (Cohttp_mirage.Client.ctx resolver conduit) ctx in
+  let start _rng _pclock _mclock _time s ctx =
     connect_store ctx >>= fun (store, upstream) ->
     Logs.info (fun m -> m "i have now master!");
     load_git None store upstream >>= function
