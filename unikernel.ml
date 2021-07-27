@@ -16,7 +16,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
 
   let pull_store repo upstream =
     Logs.info (fun m -> m "pulling from remote!");
-    Sync.pull repo upstream `Set >|= function
+    Sync.pull ~depth:1 repo upstream `Set >|= function
     | Ok `Empty -> Logs.warn (fun m -> m "pulled empty repository")
     | Ok (`Head _ as s) -> Logs.info (fun m -> m "ok, pulled %a!" Sync.pp_status s)
     | Error (`Msg e) -> Logs.warn (fun m -> m "pull error %s" e)
