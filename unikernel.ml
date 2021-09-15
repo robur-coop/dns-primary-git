@@ -4,10 +4,28 @@
 
 open Lwt.Infix
 
+module Fake_http = struct
+  type error = Not_implemented
+  let pp_error ppf Not_implemented = Fmt.string ppf "HTTP not implemented"
+  let get ~ctx:_ ?headers:_ _uri = Lwt.return_error Not_implemented
+  let post ~ctx:_ ?headers:_ _uri _body = Lwt.return_error Not_implemented
+end
+
+let remote ?(ctx= Mimic.empty) ?headers:_ uri = match Smart_git.Endpoint.of_string uri with
+  | Ok edn -> (ctx, edn)
+  | Error (`Msg _err) -> Fmt.invalid_arg "Invalid Git remote: %S" uri
+
+module KV (C : Irmin.Contents.S) = struct
+  module Maker = Irmin_git.KV (Irmin_git.Mem) (Git.Mem.Sync (Irmin_git.Mem) (Fake_http))
+  include Maker.Make (C)
+
+  let remote ?ctx ?headers uri = E (remote ?ctx ?headers uri)
+end
+
 module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Mirage_stack.V4V6) (_ : sig end) = struct
 
-  module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
-  module Sync = Irmin.Sync(Store)
+  module Store = KV (Irmin.Contents.String)
+  module Sync = Irmin.Sync.Make (Store)
 
   let connect_store ctx =
     let config = Irmin_mem.config () in
@@ -173,10 +191,10 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     | Ok data ->
       let info () =
         let date = Int64.of_float Ptime.Span.(to_float_s (v (P.now_d_ps ())))
-        and commit = Fmt.strf "%a changed %a" Ipaddr.pp ip Domain_name.pp zone
+        and message = Fmt.strf "%a changed %a" Ipaddr.pp ip Domain_name.pp zone
         and author = Fmt.strf "%a via pimary git" Fmt.(option ~none:(unit "no key") Domain_name.pp) key
         in
-        Irmin.Info.v ~date ~author commit
+        Irmin.Info.Default.v ~author ~message date
       in
       Store.set ~info store [Domain_name.to_string zone] data >|= function
       | Ok () -> ()
