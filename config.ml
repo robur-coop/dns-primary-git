@@ -2,8 +2,9 @@
 
 open Mirage
 
-(* boilerplate from https://github.com/mirage/ocaml-git.git unikernel/config.ml
-   (commit #3bfcf215f959b71580e5c0b655700bb9484aee8c) *)
+(* boilerplate from https://github.com/mirage/ocaml-git.git
+   unikernel/empty-commit/config.ml
+   (commit #ecdfc6dc13834f5f1a8e378718512eda6e67c982) *)
 type mimic = Mimic
 
 let mimic = typ Mimic
@@ -90,13 +91,13 @@ let mimic_dns_conf =
   let packages = [ package "git-mirage" ~sublibs:[ "dns" ] ] in
   impl @@ object
        inherit base_configurable
-       method ty = random @-> mclock @-> time @-> stackv4v6 @-> mimic @-> mimic
+       method ty = random @-> mclock @-> pclock @-> time @-> stackv4v6 @-> mimic @-> mimic
        method module_name = "Git_mirage_dns.Make"
        method! packages = Key.pure packages
        method name = "dns_ctx"
        method! connect _ modname =
          function
-         | [ _; _; _; stack; tcp_ctx ] ->
+         | [ _; _; _; _; stack; tcp_ctx ] ->
              Fmt.str
                {ocaml|let dns_ctx00 = Mimic.merge %s %s.ctx in
                       let dns_ctx01 = %s.with_dns %s dns_ctx00 in
@@ -106,34 +107,19 @@ let mimic_dns_conf =
          | _ -> assert false
      end
 
-let mimic_dns_impl random mclock time stackv4v6 mimic_tcp =
-  mimic_dns_conf $ random $ mclock $ time $ stackv4v6 $ mimic_tcp
-
-type paf = Paf
-let paf = typ Paf
-
-let paf_conf () =
-  let packages = [ package "paf" ~sublibs:[ "mirage" ] ] in
-  impl @@ object
-    inherit base_configurable
-    method ty = time @-> stackv4v6 @-> paf
-    method module_name = "Paf_mirage.Make"
-    method! packages = Key.pure packages
-    method name = "paf"
-  end
-
-let paf_impl time stackv4v6 = paf_conf () $ time $ stackv4v6
+let mimic_dns_impl random mclock pclock time stackv4v6 mimic_tcp =
+  mimic_dns_conf $ random $ mclock $ pclock $ time $ stackv4v6 $ mimic_tcp
 
 let mimic_paf_conf () =
   let packages = [ package "git-paf" ] in
   impl @@ object
        inherit base_configurable
-       method ty = time @-> pclock @-> stackv4v6 @-> paf @-> mimic @-> mimic
+       method ty = time @-> pclock @-> stackv4v6 @-> mimic @-> mimic
        method module_name = "Git_paf.Make"
        method! packages = Key.pure packages
        method name = "paf_ctx"
        method! connect _ modname = function
-         | [ _; _; _; _; tcp_ctx; ] ->
+         | [ _; _; _; tcp_ctx; ] ->
              Fmt.str
                {ocaml|let paf_ctx00 = Mimic.merge %s %s.ctx in
                       Lwt.return paf_ctx00|ocaml}
@@ -141,12 +127,11 @@ let mimic_paf_conf () =
          | _ -> assert false
      end
 
-let mimic_paf_impl time pclock stackv4v6 paf mimic_tcp =
+let mimic_paf_impl time pclock stackv4v6 mimic_tcp =
   mimic_paf_conf ()
   $ time
   $ pclock
   $ stackv4v6
-  $ paf
   $ mimic_tcp
 (* --- end of copied code --- *)
 
@@ -166,11 +151,11 @@ let authenticator =
   let doc = Key.Arg.info ~doc:"Authenticator." ["authenticator"] in
   Key.(create "authenticator" Arg.(opt (some string) None doc))
 
-let mimic_impl ~kind ~seed ~authenticator stackv4v6 random mclock pclock time paf =
+let mimic_impl ~kind ~seed ~authenticator stackv4v6 random mclock pclock time =
   let mtcp = mimic_tcp_impl stackv4v6 in
-  let mdns = mimic_dns_impl random mclock time stackv4v6 mtcp in
+  let mdns = mimic_dns_impl random mclock pclock time stackv4v6 mtcp in
   let mssh = mimic_ssh_impl ~kind ~seed ~auth:authenticator stackv4v6 mtcp mclock in
-  let mpaf = mimic_paf_impl time pclock stackv4v6 paf mtcp in
+  let mpaf = mimic_paf_impl time pclock stackv4v6 mtcp in
   merge mpaf (merge mssh mdns)
 
 let net = generic_stackv4v6 default_network
@@ -178,18 +163,17 @@ let net = generic_stackv4v6 default_network
 let mimic_impl =
   mimic_impl ~kind:`Rsa ~seed ~authenticator net
     default_random default_monotonic_clock default_posix_clock default_time
-    (paf_impl default_time net)
 
 let dns_handler =
   let packages = [
     package "logs" ;
     package ~min:"5.0.0" ~sublibs:["mirage"; "zone"] "dns-server";
     package "dns-tsig";
-    package ~min:"2.6.0" "irmin-mirage";
-    package ~min:"2.6.0" "irmin-mirage-git";
-    package ~min:"3.4.0" "git-mirage";
-    package "git-paf";
-    package ~sublibs:["cohttp"] "paf";
+    package ~min:"2.8.0" "irmin-mirage";
+    package ~min:"2.8.0" "irmin-mirage-git";
+    package ~min:"3.6.0" "git-mirage";
+    package ~min:"3.5.0" "git-paf";
+    package ~min:"0.0.6" ~sublibs:["mirage"] "paf";
   ] in
   foreign
     ~keys:[Key.abstract remote_k ; Key.abstract axfr]
