@@ -41,7 +41,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     | Error (ctx, e) -> Error (`Msg ("while loading zones from git: " ^ ctx ^ " " ^ e))
     | Ok bindings ->
       Logs.info (fun m -> m "found %d bindings: %a" (List.length bindings)
-                    Fmt.(list ~sep:(unit ",@ ") (pair ~sep:(unit ": ") Domain_name.pp int))
+                    Fmt.(list ~sep:(any ",@ ") (pair ~sep:(any ": ") Domain_name.pp int))
                     (List.map (fun (k, v) -> k, String.length v) bindings)) ;
       let open Rresult.R.Infix in
       (* split into keys and zones *)
@@ -62,7 +62,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
         let zone_rrs = Domain_name.Map.filter (fun name _ -> in_zone name) rrs in
         let trie' = Dns_trie.insert_map zone_rrs trie in
         Rresult.R.reword_error
-          (fun _ -> `Msg (Fmt.strf "no SOA for %a" Domain_name.pp zone))
+          (fun _ -> `Msg (Fmt.str "no SOA for %a" Domain_name.pp zone))
           (Dns_trie.lookup zone Dns.Rr_map.Soa trie') >>= fun _ ->
         Rresult.R.reword_error
           (fun e -> `Msg (Fmt.to_to_string Dns_trie.pp_zone_check e))
@@ -173,8 +173,8 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     | Ok data ->
       let info () =
         let date = Int64.of_float Ptime.Span.(to_float_s (v (P.now_d_ps ())))
-        and commit = Fmt.strf "%a changed %a" Ipaddr.pp ip Domain_name.pp zone
-        and author = Fmt.strf "%a via pimary git" Fmt.(option ~none:(unit "no key") Domain_name.pp) key
+        and commit = Fmt.str "%a changed %a" Ipaddr.pp ip Domain_name.pp zone
+        and author = Fmt.str "%a via pimary git" Fmt.(option ~none:(any "no key") Domain_name.pp) key
         in
         Irmin.Info.v ~date ~author commit
       in
@@ -219,10 +219,10 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
       and on_notify n t =
         match n with
         | `Notify soa ->
-          Logs.err (fun m -> m "ignoring normal notify %a" Fmt.(option ~none:(unit "no soa") Dns.Soa.pp) soa);
+          Logs.err (fun m -> m "ignoring normal notify %a" Fmt.(option ~none:(any "no soa") Dns.Soa.pp) soa);
           Lwt.return None
         | `Signed_notify soa ->
-          Logs.info (fun m -> m "got notified, checking out %a" Fmt.(option ~none:(unit "no soa") Dns.Soa.pp) soa);
+          Logs.info (fun m -> m "got notified, checking out %a" Fmt.(option ~none:(any "no soa") Dns.Soa.pp) soa);
           load_git (Some (Dns_server.Primary.data t)) store upstream >|= function
           | Error (`Msg msg) ->
             Logs.err (fun m -> m "error %s while loading git while in notify, continuing with old data" msg);
