@@ -4,14 +4,14 @@
 
 open Lwt.Infix
 
-module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Mirage_stack.V4V6) (_ : sig end) = struct
+module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
 
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
 
   let connect_store ctx =
     let config = Irmin_mem.config () in
-    Store.Repo.v config >>= Store.master >|= fun repo ->
+    Store.Repo.v config >>= fun repo -> Store.of_branch repo (Key_gen.branch ()) >|= fun repo ->
     repo, Store.remote ~ctx (Key_gen.remote ())
 
   let pull_store repo upstream =
