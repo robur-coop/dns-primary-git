@@ -193,7 +193,7 @@ let dns_handler =
     package "logs" ;
     package ~min:"5.0.0" ~sublibs:["mirage"; "zone"] "dns-server";
     package "dns-tsig";
-    package ~min:"2.10.0" "irmin-mirage";
+    package ~min:"2.10.0" ~max:"3.0.0" "irmin-mirage";
     package ~min:"2.10.0" "irmin-mirage-git";
     package ~min:"3.7.0" ~max:"3.8.0" "git-mirage";
     package ~min:"3.7.0" "git-paf";
