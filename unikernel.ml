@@ -48,10 +48,10 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     load_zones store upstream >|= function
     | Error _ as e -> e
     | Ok bindings ->
+      let ( let* ) = Result.bind in
       Logs.info (fun m -> m "found %d bindings: %a" (List.length bindings)
                     Fmt.(list ~sep:(any ",@ ") (pair ~sep:(any ": ") Domain_name.pp int))
                     (List.map (fun (k, v) -> k, String.length v) bindings)) ;
-      let open Rresult.R.Infix in
       (* split into keys and zones *)
       let keys, data =
         let is_key subdomain =
@@ -64,48 +64,56 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
       let zones = Domain_name.Set.of_list (fst (List.split data)) in
       let parse_and_maybe_add trie zone data =
         Logs.info (fun m -> m "parsing %a: %s" Domain_name.pp zone data);
-        Dns_zone.parse data >>= fun rrs ->
+        let* rrs = Dns_zone.parse data in
         (* we take all resource records within the zone *)
         let in_zone subdomain = Domain_name.is_subdomain ~domain:zone ~subdomain in
         let zone_rrs = Domain_name.Map.filter (fun name _ -> in_zone name) rrs in
         let trie' = Dns_trie.insert_map zone_rrs trie in
-        Rresult.R.reword_error
-          (fun _ -> `Msg (Fmt.str "no SOA for %a" Domain_name.pp zone))
-          (Dns_trie.lookup zone Dns.Rr_map.Soa trie') >>= fun _ ->
-        Rresult.R.reword_error
-          (fun e -> `Msg (Fmt.to_to_string Dns_trie.pp_zone_check e))
-          (Dns_trie.check trie') >>= fun () ->
-        (match old_trie with
-         | None -> Ok ()
-         | Some old_trie ->
-           match Dns_trie.entries zone old_trie, Dns_trie.lookup zone Dns.Rr_map.Soa trie' with
-           | Ok (old_soa, old_entries), Ok soa ->
-             (* good if old_soa = soa && old_entries ++ old_soa == zone_rrs
-                or soa is newer than old_soa *)
-             (* TODO error recovery could be to increment the SOA serial, followed
-                by a push to git (the other errors above and below can't be fixed
-                automatically - thus a git pull can always fail :/) *)
-             if Dns.Soa.newer ~old:old_soa soa then
-               Ok ()
-             else if
-               Dns.Name_rr_map.(equal zone_rrs
-                                  (add zone Dns.Rr_map.Soa old_soa old_entries))
-             then
-               Ok ()
-             else
-               Rresult.R.error_msgf "SOA serial has not been incremented for %a"
-                 Domain_name.pp zone
-           | Error _, _ -> Ok ()
-           | _, Error _ -> Ok ()) >>= fun () ->
+        let* _ =
+          Result.map_error
+            (fun _ -> `Msg (Fmt.str "no SOA for %a" Domain_name.pp zone))
+            (Dns_trie.lookup zone Dns.Rr_map.Soa trie')
+        in
+        let* () =
+          Result.map_error
+            (fun e -> `Msg (Fmt.to_to_string Dns_trie.pp_zone_check e))
+            (Dns_trie.check trie')
+        in
+        let* () =
+          match old_trie with
+          | None -> Ok ()
+          | Some old_trie ->
+            match Dns_trie.entries zone old_trie, Dns_trie.lookup zone Dns.Rr_map.Soa trie' with
+            | Ok (old_soa, old_entries), Ok soa ->
+              (* good if old_soa = soa && old_entries ++ old_soa == zone_rrs
+                 or soa is newer than old_soa *)
+              (* TODO error recovery could be to increment the SOA serial, followed
+                 by a push to git (the other errors above and below can't be fixed
+                 automatically - thus a git pull can always fail :/) *)
+              if Dns.Soa.newer ~old:old_soa soa then
+                Ok ()
+              else if
+                Dns.Name_rr_map.(equal zone_rrs
+                                   (add zone Dns.Rr_map.Soa old_soa old_entries))
+              then
+                Ok ()
+              else
+                Error (`Msg (Fmt.str "SOA serial has not been incremented for %a"
+                               Domain_name.pp zone))
+            | Error _, _ -> Ok ()
+            | _, Error _ -> Ok ()
+        in
         (* collect potential glue:
            - find NS entries for zone
            - find A records for name servers in other zones
              (Dns_trie.check ensures that the NS in zone have an address record)
            - only if the other names are not in zones, they are picked from
              this zone file *)
-        Rresult.R.reword_error
-          (fun e -> `Msg (Fmt.to_to_string Dns_trie.pp_e e))
-          (Dns_trie.lookup zone Dns.Rr_map.Ns trie') >>= fun (_, name_servers) ->
+        let* (_, name_servers) =
+          Result.map_error
+            (fun e -> `Msg (Fmt.to_to_string Dns_trie.pp_e e))
+            (Dns_trie.lookup zone Dns.Rr_map.Ns trie')
+        in
         let not_in_zones nameserver =
           let in_this_zone = in_zone nameserver
           and in_other_zones =
@@ -131,17 +139,19 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
                 trie) need_glue trie'
         in
         (* this prints all zones of the trie' *)
-        Dns_server.text zone trie' >>| fun zone_data ->
+        let* zone_data = Dns_server.text zone trie' in
         Logs.info (fun m -> m "loade zone %a" Domain_name.pp zone);
         Logs.info (fun m -> m "loaded zone@.%s" zone_data);
-        trie'
+        Ok trie'
       in
-      List.fold_left (fun acc (zone, data) ->
-          acc >>= fun trie ->
-          parse_and_maybe_add trie zone data)
-        (Ok Dns_trie.empty) data >>= fun data_trie ->
+      let* data_trie =
+        List.fold_left (fun acc (zone, data) ->
+            let* trie = acc in
+            parse_and_maybe_add trie zone data)
+          (Ok Dns_trie.empty) data
+      in
       let parse_keys zone keys =
-        Dns_zone.parse keys >>= fun rrs ->
+        let* rrs = Dns_zone.parse keys in
         let tst subdomain = Domain_name.is_subdomain ~domain:zone ~subdomain in
         if not (Domain_name.Map.for_all (fun name _ -> tst name) rrs) then
           Error (`Msg "key name not in zone")
@@ -166,12 +176,14 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
           in
           Ok keys
       in
-      List.fold_left (fun acc (zone, keys) ->
-          acc >>= fun acc ->
-          parse_keys zone keys >>| fun ks ->
-          (ks @ acc))
-        (Ok []) keys >>| fun keys ->
-      (data_trie, keys)
+      let* keys =
+        List.fold_left (fun acc (zone, keys) ->
+            let* acc = acc in
+            let* ks = parse_keys zone keys in
+            Ok (ks @ acc))
+          (Ok []) keys
+      in
+      Ok (data_trie, keys)
 
   let store_zone key ip t store zone =
     match Dns_server.text zone (Dns_server.Primary.data t) with
