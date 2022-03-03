@@ -4,7 +4,7 @@
 
 open Lwt.Infix
 
-module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Mirage_stack.V4V6) (_ : sig end) = struct
+module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
 
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
   module Sync = Irmin.Sync(Store)
@@ -17,28 +17,36 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
   let pull_store repo upstream =
     Logs.info (fun m -> m "pulling from remote!");
     Sync.pull ~depth:1 repo upstream `Set >|= function
-    | Ok `Empty -> Logs.warn (fun m -> m "pulled empty repository")
-    | Ok (`Head _ as s) -> Logs.info (fun m -> m "ok, pulled %a!" Sync.pp_status s)
-    | Error (`Msg e) -> Logs.warn (fun m -> m "pull error %s" e)
-    | Error (`Conflict msg) -> Logs.warn (fun m -> m "pull conflict %s" msg)
+    | Ok `Empty -> Error (`Msg "pull_store: pulled empty repository")
+    | Ok (`Head _ as s) ->
+      Logs.info (fun m -> m "pull_store: ok, pulled %a!" Sync.pp_status s);
+      Ok ()
+    | Error (`Msg e) -> Error (`Msg ("pull_store: error " ^ e))
+    | Error (`Conflict msg) -> Error (`Msg ("pull_store: conflict " ^ msg))
 
   let load_zones store upstream =
-    pull_store store upstream >>= fun () ->
-    Store.list store [] >>= fun files ->
-    Lwt_list.fold_left_s (fun acc (name, kind) ->
-        match acc with
-        | Error e -> Lwt.return (Error e)
-        | Ok acc -> match Store.Tree.destruct kind, Domain_name.of_string name with
-          | `Node _, _ -> Lwt.return (Error (name, "got node, expected contents"))
-          | `Contents _, Error (`Msg e) -> Lwt.return (Error (name, "not a domain name " ^ e))
-          | `Contents _, Ok zone ->
-            Store.get store [name] >|= fun data ->
-            Ok ((zone, data) :: acc))
-      (Ok []) files
+    pull_store store upstream >>= function
+    | Error _ as e -> Lwt.return e
+    | Ok () ->
+      Store.list store [] >>= fun files ->
+      Lwt_list.fold_left_s (fun acc (name, kind) ->
+          match acc with
+          | Error _ as e -> Lwt.return e
+          | Ok acc -> match Store.Tree.destruct kind, Domain_name.of_string name with
+            | `Node _, _ ->
+              let msg = Fmt.str "load_zones %S: expected contents, got node" name in
+              Lwt.return (Error (`Msg msg))
+            | `Contents _, Error (`Msg e) ->
+              let msg = Fmt.str "load_zones %S: noe a domain name %s" name e in
+              Lwt.return (Error (`Msg msg))
+            | `Contents _, Ok zone ->
+              Store.get store [name] >|= fun data ->
+              Ok ((zone, data) :: acc))
+        (Ok []) files
 
   let load_git old_trie store upstream =
     load_zones store upstream >|= function
-    | Error (ctx, e) -> Error (`Msg ("while loading zones from git: " ^ ctx ^ " " ^ e))
+    | Error _ as e -> e
     | Ok bindings ->
       Logs.info (fun m -> m "found %d bindings: %a" (List.length bindings)
                     Fmt.(list ~sep:(any ",@ ") (pair ~sep:(any ": ") Domain_name.pp int))
