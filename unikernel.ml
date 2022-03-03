@@ -15,11 +15,11 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     repo, Store.remote ~ctx (Key_gen.remote ())
 
   let pull_store repo upstream =
-    Logs.info (fun m -> m "pulling from remote!");
+    Logs.debug (fun m -> m "pulling from remote!");
     Sync.pull ~depth:1 repo upstream `Set >|= function
     | Ok `Empty -> Error (`Msg "pull_store: pulled empty repository")
     | Ok (`Head _ as s) ->
-      Logs.info (fun m -> m "pull_store: ok, pulled %a!" Sync.pp_status s);
+      Logs.debug (fun m -> m "pull_store: ok, pulled %a!" Sync.pp_status s);
       Ok ()
     | Error (`Msg e) -> Error (`Msg ("pull_store: error " ^ e))
     | Error (`Conflict msg) -> Error (`Msg ("pull_store: conflict " ^ msg))
@@ -49,9 +49,9 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     | Error _ as e -> e
     | Ok bindings ->
       let ( let* ) = Result.bind in
-      Logs.info (fun m -> m "found %d bindings: %a" (List.length bindings)
-                    Fmt.(list ~sep:(any ",@ ") (pair ~sep:(any ": ") Domain_name.pp int))
-                    (List.map (fun (k, v) -> k, String.length v) bindings)) ;
+      Logs.debug (fun m -> m "found %d bindings: %a" (List.length bindings)
+                     Fmt.(list ~sep:(any ",@ ") (pair ~sep:(any ": ") Domain_name.pp int))
+                     (List.map (fun (k, v) -> k, String.length v) bindings)) ;
       (* split into keys and zones *)
       let keys, data =
         let is_key subdomain =
@@ -63,7 +63,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
       in
       let zones = Domain_name.Set.of_list (fst (List.split data)) in
       let parse_and_maybe_add trie zone data =
-        Logs.info (fun m -> m "parsing %a: %s" Domain_name.pp zone data);
+        Logs.debug (fun m -> m "parsing %a: %s" Domain_name.pp zone data);
         let* rrs = Dns_zone.parse data in
         (* we take all resource records within the zone *)
         let in_zone subdomain = Domain_name.is_subdomain ~domain:zone ~subdomain in
@@ -121,7 +121,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
                 (fun domain -> Domain_name.is_subdomain ~domain ~subdomain:nameserver)
                 zones
             then begin
-              Logs.info (fun m -> m "ignoring glue for NS %a in %a since authoritative for that zone"
+              Logs.debug (fun m -> m "ignoring glue for NS %a in %a since authoritative for that zone"
                             Domain_name.pp nameserver Domain_name.pp zone);
               true
             end else false
@@ -140,15 +140,18 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
         in
         (* this prints all zones of the trie' *)
         let* zone_data = Dns_server.text zone trie' in
-        Logs.info (fun m -> m "loade zone %a" Domain_name.pp zone);
-        Logs.info (fun m -> m "loaded zone@.%s" zone_data);
+        Logs.info (fun m -> m "loaded zone %a" Domain_name.pp zone);
+        Logs.debug (fun m -> m "loaded zone@.%s" zone_data);
         Ok trie'
       in
-      let* data_trie =
-        List.fold_left (fun acc (zone, data) ->
-            let* trie = acc in
-            parse_and_maybe_add trie zone data)
-          (Ok Dns_trie.empty) data
+      let data_trie =
+        List.fold_left (fun trie (zone, data) ->
+            match parse_and_maybe_add trie zone data with
+            | Ok trie' -> trie'
+            | Error (`Msg msg) ->
+              Logs.warn (fun m -> m "ignoring malformed zone %a: %s" Domain_name.pp zone msg);
+              trie)
+          Dns_trie.empty data
       in
       let parse_keys zone keys =
         let* rrs = Dns_zone.parse keys in
@@ -166,7 +169,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
                 | Some (_, keys) ->
                   match Dns.Rr_map.Dnskey_set.elements keys with
                   | [ x ] ->
-                    Logs.info (fun m -> m "inserting dnskey %a" Domain_name.pp n);
+                    Logs.debug (fun m -> m "inserting dnskey %a" Domain_name.pp n);
                     (n, x) :: acc
                   | xs ->
                     Logs.warn (fun m -> m "%d dnskeys for %a (expected exactly one)"
@@ -176,12 +179,14 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
           in
           Ok keys
       in
-      let* keys =
+      let keys =
         List.fold_left (fun acc (zone, keys) ->
-            let* acc = acc in
-            let* ks = parse_keys zone keys in
-            Ok (ks @ acc))
-          (Ok []) keys
+            match parse_keys zone keys with
+            | Ok keys -> keys @ acc
+            | Error (`Msg msg) ->
+              Logs.warn (fun m -> m "ignoring key %a %s" Domain_name.pp zone msg);
+              acc)
+          [] keys
       in
       Ok (data_trie, keys)
 
@@ -218,7 +223,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     in
     Lwt_list.iter_s (store_zone key ip t store) zones >>= fun () ->
     (* TODO removal of a zone should lead to dropping this zone from git! *)
-    Logs.info (fun m -> m "pushing to remote!");
+    Logs.debug (fun m -> m "pushing to remote!");
     Sync.push store upstream  >|= function
     | Ok `Empty -> Logs.warn (fun m -> m "pushed empty zonefiles")
     | Ok (`Head _ as s) -> Logs.info (fun m -> m "pushed zonefile commit %a" Sync.pp_status s)
@@ -231,7 +236,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     load_git None store upstream >>= function
     | Error (`Msg msg) ->
       Logs.err (fun m -> m "error during loading git %s" msg);
-      Lwt.return_unit
+      Lwt.fail_with "git pull failed"
     | Ok (trie, keys) ->
       let on_update ~old ~authenticated_key ~update_source t =
         store_zones ~old authenticated_key update_source t store upstream
@@ -241,13 +246,13 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
           Logs.err (fun m -> m "ignoring normal notify %a" Fmt.(option ~none:(any "no soa") Dns.Soa.pp) soa);
           Lwt.return None
         | `Signed_notify soa ->
-          Logs.info (fun m -> m "got notified, checking out %a" Fmt.(option ~none:(any "no soa") Dns.Soa.pp) soa);
+          Logs.debug (fun m -> m "got notified, checking out %a" Fmt.(option ~none:(any "no soa") Dns.Soa.pp) soa);
           load_git (Some (Dns_server.Primary.data t)) store upstream >|= function
           | Error (`Msg msg) ->
             Logs.err (fun m -> m "error %s while loading git while in notify, continuing with old data" msg);
             None
           | Ok trie ->
-            Logs.info (fun m -> m "loaded a new trie from git!");
+            Logs.debug (fun m -> m "loaded a new trie from git!");
             Some trie
       in
       let t =
