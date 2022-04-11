@@ -1,7 +1,5 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
-(* TODO: instead of storing all zones flat, maybe put them into subdirectories *)
-
 open Lwt.Infix
 
 module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
@@ -30,165 +28,48 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     | Ok () ->
       Store.list store [] >>= fun files ->
       Lwt_list.fold_left_s (fun acc (name, kind) ->
-          match acc with
-          | Error _ as e -> Lwt.return e
-          | Ok acc -> match Store.Tree.destruct kind, Domain_name.of_string name with
-            | `Node _, _ ->
-              let msg = Fmt.str "load_zones %S: expected contents, got node" name in
-              Lwt.return (Error (`Msg msg))
-            | `Contents _, Error (`Msg e) ->
-              let msg = Fmt.str "load_zones %S: noe a domain name %s" name e in
-              Lwt.return (Error (`Msg msg))
-            | `Contents _, Ok zone ->
-              Store.get store [name] >|= fun data ->
-              Ok ((zone, data) :: acc))
-        (Ok []) files
+          match Store.Tree.destruct kind with
+          | `Node _ ->
+            Logs.info (fun m -> m "load_zones ignoring %S (expected content)"
+                          name);
+            Lwt.return acc
+          | `Contents _ ->
+            Store.get store [name] >|= fun data ->
+            (name, data) :: acc)
+        [] files >|= fun zones ->
+      Ok zones
 
   let load_git old_trie store upstream =
     load_zones store upstream >|= function
     | Error _ as e -> e
     | Ok bindings ->
-      let ( let* ) = Result.bind in
-      Logs.debug (fun m -> m "found %d bindings: %a" (List.length bindings)
-                     Fmt.(list ~sep:(any ",@ ") (pair ~sep:(any ": ") Domain_name.pp int))
-                     (List.map (fun (k, v) -> k, String.length v) bindings)) ;
-      (* split into keys and zones *)
-      let keys, data =
-        let is_key subdomain =
-          Domain_name.is_subdomain ~domain:(Domain_name.of_string_exn "_keys") ~subdomain
-        in
-        let keys, data = List.partition (fun (name, _) -> is_key name) bindings in
-        List.map (fun (n, v) -> Domain_name.drop_label_exn ~rev:true n, v) keys,
-        data
-      in
-      let zones = Domain_name.Set.of_list (fst (List.split data)) in
-      let parse_and_maybe_add trie zone data =
-        Logs.debug (fun m -> m "parsing %a: %s" Domain_name.pp zone data);
-        let* rrs = Dns_zone.parse data in
-        (* we take all resource records within the zone *)
-        let in_zone subdomain = Domain_name.is_subdomain ~domain:zone ~subdomain in
-        let zone_rrs = Domain_name.Map.filter (fun name _ -> in_zone name) rrs in
-        let trie' = Dns_trie.insert_map zone_rrs trie in
-        let* _ =
-          Result.map_error
-            (fun _ -> `Msg (Fmt.str "no SOA for %a" Domain_name.pp zone))
-            (Dns_trie.lookup zone Dns.Rr_map.Soa trie')
-        in
-        let* () =
-          Result.map_error
-            (fun e -> `Msg (Fmt.to_to_string Dns_trie.pp_zone_check e))
-            (Dns_trie.check trie')
-        in
-        let* () =
-          match old_trie with
-          | None -> Ok ()
-          | Some old_trie ->
-            match Dns_trie.entries zone old_trie, Dns_trie.lookup zone Dns.Rr_map.Soa trie' with
-            | Ok (old_soa, old_entries), Ok soa ->
-              (* good if old_soa = soa && old_entries ++ old_soa == zone_rrs
-                 or soa is newer than old_soa *)
-              (* TODO error recovery could be to increment the SOA serial, followed
-                 by a push to git (the other errors above and below can't be fixed
-                 automatically - thus a git pull can always fail :/) *)
-              if Dns.Soa.newer ~old:old_soa soa then
-                Ok ()
-              else if
-                Dns.Name_rr_map.(equal zone_rrs
+      let zones, trie, keys = Dns_zone.decode_zones_keys bindings in
+      (match old_trie with
+       | None -> ()
+       | Some old_trie ->
+         Domain_name.Set.iter (fun zone ->
+             match
+               Dns_trie.entries zone old_trie,
+               Dns_trie.entries zone trie
+             with
+             | Ok (old_soa, old_entries), Ok (soa, entries) ->
+               (* good if old_soa = soa && old_entries ++ old_soa == zone_rrs
+                  or soa is newer than old_soa *)
+               (* TODO error recovery could be to increment the SOA serial,
+                  followed by a push to git (the other errors above and below
+                  can't be fixed automatically - thus a git pull can always
+                  fail :/) *)
+               let equal =
+                 Dns.Name_rr_map.(equal
+                                   (add zone Dns.Rr_map.Soa soa entries)
                                    (add zone Dns.Rr_map.Soa old_soa old_entries))
-              then
-                Ok ()
-              else
-                Error (`Msg (Fmt.str "SOA serial has not been incremented for %a"
-                               Domain_name.pp zone))
-            | Error _, _ -> Ok ()
-            | _, Error _ -> Ok ()
-        in
-        (* collect potential glue:
-           - find NS entries for zone
-           - find A records for name servers in other zones
-             (Dns_trie.check ensures that the NS in zone have an address record)
-           - only if the other names are not in zones, they are picked from
-             this zone file *)
-        let* (_, name_servers) =
-          Result.map_error
-            (fun e -> `Msg (Fmt.to_to_string Dns_trie.pp_e e))
-            (Dns_trie.lookup zone Dns.Rr_map.Ns trie')
-        in
-        let not_in_zones nameserver =
-          let in_this_zone = in_zone nameserver
-          and in_other_zones =
-            if Domain_name.Set.exists
-                (fun domain -> Domain_name.is_subdomain ~domain ~subdomain:nameserver)
-                zones
-            then begin
-              Logs.debug (fun m -> m "ignoring glue for NS %a in %a since authoritative for that zone"
-                            Domain_name.pp nameserver Domain_name.pp zone);
-              true
-            end else false
-          in
-          not (in_this_zone || in_other_zones)
-        in
-        let need_glue = Domain_name.Host_set.filter not_in_zones name_servers in
-        let trie' =
-          Domain_name.Host_set.fold (fun ns trie ->
-              match Dns.Name_rr_map.find (Domain_name.raw ns) Dns.Rr_map.A rrs with
-              | Some rr -> Dns_trie.insert ns Dns.Rr_map.A rr trie
-              | None ->
-                Logs.warn (fun m -> m "unknown IP for NS %a, it won't get notified"
-                              Domain_name.pp ns);
-                trie) need_glue trie'
-        in
-        (* this prints all zones of the trie' *)
-        let* zone_data = Dns_server.text zone trie' in
-        Logs.info (fun m -> m "loaded zone %a" Domain_name.pp zone);
-        Logs.debug (fun m -> m "loaded zone@.%s" zone_data);
-        Ok trie'
-      in
-      let data_trie =
-        List.fold_left (fun trie (zone, data) ->
-            match parse_and_maybe_add trie zone data with
-            | Ok trie' -> trie'
-            | Error (`Msg msg) ->
-              Logs.warn (fun m -> m "ignoring malformed zone %a: %s" Domain_name.pp zone msg);
-              trie)
-          Dns_trie.empty data
-      in
-      let parse_keys zone keys =
-        let* rrs = Dns_zone.parse keys in
-        let tst subdomain = Domain_name.is_subdomain ~domain:zone ~subdomain in
-        if not (Domain_name.Map.for_all (fun name _ -> tst name) rrs) then
-          Error (`Msg "key name not in zone")
-        else
-          (* from the name_rr_map extract a (Domain_name.t * Dnskey) list *)
-          let keys =
-            Domain_name.Map.fold (fun n data acc ->
-                match Dns.Rr_map.(find Dnskey data) with
-                | None ->
-                  Logs.warn (fun m -> m "no dnskey found %a" Domain_name.pp n);
-                  acc
-                | Some (_, keys) ->
-                  match Dns.Rr_map.Dnskey_set.elements keys with
-                  | [ x ] ->
-                    Logs.debug (fun m -> m "inserting dnskey %a" Domain_name.pp n);
-                    (n, x) :: acc
-                  | xs ->
-                    Logs.warn (fun m -> m "%d dnskeys for %a (expected exactly one)"
-                                  (List.length xs) Domain_name.pp n);
-                    acc)
-              rrs []
-          in
-          Ok keys
-      in
-      let keys =
-        List.fold_left (fun acc (zone, keys) ->
-            match parse_keys zone keys with
-            | Ok keys -> keys @ acc
-            | Error (`Msg msg) ->
-              Logs.warn (fun m -> m "ignoring key %a %s" Domain_name.pp zone msg);
-              acc)
-          [] keys
-      in
-      Ok (data_trie, keys)
+               in
+               if not (Dns.Soa.newer ~old:old_soa soa) && not equal then
+                 Logs.warn (fun m -> m "SOA serial not incremented for %a"
+                               Domain_name.pp zone)
+                 | Error _, Ok _ | Ok _, Error _ | Error _, Error _ -> ())
+           zones);
+      Ok (trie, keys)
 
   let store_zone key ip t store zone =
     match Dns_server.text zone (Dns_server.Primary.data t) with
@@ -199,7 +80,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
       let info () =
         let date = Int64.of_float Ptime.Span.(to_float_s (v (P.now_d_ps ())))
         and commit = Fmt.str "%a changed %a" Ipaddr.pp ip Domain_name.pp zone
-        and author = Fmt.str "%a via pimary git" Fmt.(option ~none:(any "no key") Domain_name.pp) key
+        and author = Fmt.str "%a via primary git" Fmt.(option ~none:(any "no key") Domain_name.pp) key
         in
         Irmin.Info.v ~date ~author commit
       in
@@ -208,9 +89,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
       | Error _ -> Logs.err (fun m -> m "error while writing to store")
 
   let store_zones ~old key ip t store upstream =
-    (* TODO do a single commit!
-       - either KV and batch (but no commit context)
-       - or Store.set_tree but dunno what the tree should be? all zones? *)
+    (* TODO do a single commit (maybe) *)
     let data = Dns_server.Primary.data t in
     let zones =
       Dns_trie.fold Dns.Rr_map.Soa data
