@@ -2,6 +2,14 @@
 
 open Lwt.Infix
 
+let decompose_git_url () =
+  match String.split_on_char '#' (Key_gen.remote ()) with
+  | [ url ] -> url, None
+  | [ url ; branch ] -> url, Some branch
+  | _ ->
+    Logs.err (fun m -> m "expected at most a single # in remote");
+    exit 64
+
 module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
 
   module Store = Irmin_mirage_git.Mem.KV(Irmin.Contents.String)
@@ -9,8 +17,12 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
 
   let connect_store ctx =
     let config = Irmin_mem.config () in
-    Store.Repo.v config >>= Store.master >|= fun repo ->
-    repo, Store.remote ~ctx (Key_gen.remote ())
+    let remote, branch = decompose_git_url () in
+    Store.Repo.v config >>= fun r ->
+    (match branch with
+     | None -> Store.master r
+     | Some branch -> Store.of_branch r branch) >|= fun repo ->
+    repo, Store.remote ~ctx remote
 
   let pull_store repo upstream =
     Logs.debug (fun m -> m "pulling from remote!");

@@ -148,7 +148,7 @@ let tcpv4v6_of_stackv4v6 =
 (* --- end of copied code --- *)
 
 let remote_k =
-  let doc = Key.Arg.info ~doc:"Remote git repository." ["r"; "remote"] in
+  let doc = Key.Arg.info ~doc:"Remote git repository. Use '#' as a separator for a branch name." ["r"; "remote"] in
   Key.(create "remote" Arg.(opt string "https://github.com/roburio/udns.git" doc))
 
 let axfr =
