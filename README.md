@@ -17,9 +17,9 @@ automated provisioning of let's encrypt certificates.
 ## Installation from source
 
 To install this unikernel from source, you need to have
-[opam](https://opam.ocaml.org) (>= 2.0.0) and
-[ocaml](https://ocaml.org) (>= 4.07.0) installed. Also,
-[mirage](https://mirageos.org) is required (>= 3.10.6). Please follow the
+[opam](https://opam.ocaml.org) (>= 2.1.0) and
+[ocaml](https://ocaml.org) (>= 4.08.0) installed. Also,
+[mirage](https://mirageos.org) is required (>= 4.1.0). Please follow the
 [installation instructions](https://mirageos.org/wiki/install).
 
 The following steps will clone this git repository and compile the unikernel:
@@ -28,7 +28,7 @@ The following steps will clone this git repository and compile the unikernel:
 $ git clone https://github.com/roburio/dns-primary-git.git
 $ mirage configure -t <your-favourite-target>
 $ make depend
-$ make
+$ mirage build
 ```
 
 ## Installing as binary
