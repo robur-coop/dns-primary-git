@@ -23,7 +23,7 @@ let dns_handler =
     package "logs";
     package ~min:"6.2.2" ~sublibs:["mirage"; "zone"] "dns-server";
     package "dns-tsig";
-    package ~min:"0.0.2" "git-kv";
+    package ~min:"0.0.3" "git-kv";
     package ~min:"4.3.1" "mirage-runtime";
   ] in
   foreign
