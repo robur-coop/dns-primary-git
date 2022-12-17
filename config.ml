@@ -20,11 +20,11 @@ let authenticator =
 
 let dns_handler =
   let packages = [
-    package "logs" ;
+    package "logs";
     package ~min:"6.2.2" ~sublibs:["mirage"; "zone"] "dns-server";
     package "dns-tsig";
-    package ~min:"2.10.0" ~max:"3.0.0" "irmin-mirage";
-    package ~min:"2.10.0" "irmin-mirage-git";
+    package ~min:"0.0.3" "git-kv";
+    package ~min:"4.3.1" "mirage-runtime";
   ] in
   foreign
     ~keys:[ Key.v remote_k; Key.v axfr ]
