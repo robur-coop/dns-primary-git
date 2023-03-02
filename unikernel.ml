@@ -2,13 +2,36 @@
 
 open Lwt.Infix
 
-module Main (C : Mirage_console.S) (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) (Management : Tcpip.Stack.V4V6) = struct
+module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
+
   module Store = Git_kv.Make(P)
 
-  let counters =
-    Mirage_monitoring.counter_metrics ~f:(fun x -> x) "primary-dns"
-
-  let inc c = Metrics.add counters (fun x -> x) (fun d -> d c)
+  let inc =
+    let create ~f =
+      let data : (string, int) Hashtbl.t = Hashtbl.create 7 in
+      (fun x ->
+         let key = f x in
+         let cur = match Hashtbl.find_opt data key with
+           | None -> 0
+           | Some x -> x
+         in
+         Hashtbl.replace data key (succ cur)),
+      (fun () ->
+         let data, total =
+           Hashtbl.fold (fun key value (acc, total) ->
+               (Metrics.uint key value :: acc), value + total)
+             data ([], 0)
+         in
+         Metrics.uint "total" total :: data)
+    in
+    let src =
+      let open Metrics in
+      let doc = "Counter metrics" in
+      let incr, get = create ~f:Fun.id in
+      let data thing = incr thing; Data.v (get ()) in
+      Src.v ~doc ~tags:Metrics.Tags.[] ~data "primary-dns"
+    in
+    (fun r -> Metrics.add src (fun x -> x) (fun d -> d r))
 
   let set_zone_counter =
     let s = ref (0, 0, 0, 0) in
@@ -153,17 +176,8 @@ module Main (C : Mirage_console.S) (R : Mirage_random.S) (P : Mirage_clock.PCLOC
       Logs.err (fun m -> m "change_and_push failed with %a" Store.pp_write_error e)
 
   module D = Dns_server_mirage.Make(P)(M)(T)(S)
-  module Monitoring = Mirage_monitoring.Make(T)(P)(Management)
-  module Syslog = Logs_syslog_mirage.Udp(C)(P)(Management)
 
-  let start c _rng _pclock _mclock _time s ctx management =
-    let hostname = Key_gen.name () in
-    (match Key_gen.syslog () with
-     | None -> Logs.warn (fun m -> m "no syslog specified, dumping on stdout")
-     | Some ip -> Logs.set_reporter (Syslog.create c management ip ~hostname ()));
-    (match Key_gen.monitor () with
-     | None -> Logs.warn (fun m -> m "no monitor specified, not outputting statistics")
-     | Some ip -> Monitoring.create ~hostname ip management);
+  let start _rng _pclock _mclock _time s ctx =
     Lwt.catch (fun () ->
         inc "pull";
         Git_kv.connect ctx (Key_gen.remote ()))
