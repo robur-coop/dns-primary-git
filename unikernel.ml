@@ -6,6 +6,58 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
 
   module Store = Git_kv.Make(P)
 
+  let inc =
+    let create ~f =
+      let data : (string, int) Hashtbl.t = Hashtbl.create 7 in
+      (fun x ->
+         let key = f x in
+         let cur = match Hashtbl.find_opt data key with
+           | None -> 0
+           | Some x -> x
+         in
+         Hashtbl.replace data key (succ cur)),
+      (fun () ->
+         let data, total =
+           Hashtbl.fold (fun key value (acc, total) ->
+               (Metrics.uint key value :: acc), value + total)
+             data ([], 0)
+         in
+         Metrics.uint "total" total :: data)
+    in
+    let src =
+      let open Metrics in
+      let doc = "Counter metrics" in
+      let incr, get = create ~f:Fun.id in
+      let data thing = incr thing; Data.v (get ()) in
+      Src.v ~doc ~tags:Metrics.Tags.[] ~data "primary-dns"
+    in
+    (fun r -> Metrics.add src (fun x -> x) (fun d -> d r))
+
+  let set_zone_counter =
+    let s = ref (0, 0, 0, 0) in
+    let open Metrics in
+    let doc = "zone statistics" in
+    let data () =
+      let pull, push, active, key = !s in
+      Data.v [
+        int "zones pulled" pull ;
+        int "zones pushed" push ;
+        int "active zones" active ;
+        int "active nsupdate keys" key ;
+      ] in
+    let src = Src.v ~doc ~tags:Tags.[] ~data "dns-zones" in
+    (fun action n ->
+       let pull, push, active, key = !s in
+       let s' =
+         match action with
+         | `Pull -> n, push, active, key
+         | `Push -> pull, n, active, key
+         | `Active -> pull, push, n, key
+         | `Key -> pull, push, active, n
+       in
+       s := s';
+       add src (fun x -> x) (fun d -> d ()))
+
   let zones store =
     Store.list store Mirage_kv.Key.empty >|= function
     | Error e ->
@@ -32,6 +84,9 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
         | Ok data -> (Mirage_kv.Key.basename key, data) :: acc)
       [] zone_keys >|= fun bindings ->
     let zones, trie, keys = Dns_zone.decode_zones_keys bindings in
+    set_zone_counter `Pull (List.length bindings);
+    set_zone_counter `Active (Domain_name.Set.cardinal zones);
+    set_zone_counter `Key (List.length keys);
     (match old_trie with
      | None -> ()
      | Some old_trie ->
@@ -91,6 +146,9 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
     let message = Fmt.str "changed by %a" Ipaddr.pp ip
     and author = Fmt.str "%a via primary git" Fmt.(option ~none:(any "no key") Domain_name.pp) key
     in
+    set_zone_counter `Push (List.length zones);
+    set_zone_counter `Active (List.length zones);
+    inc "push";
     Store.change_and_push store ~author ~message
       (fun s ->
          Domain_name.Set.fold (fun name acc ->
@@ -121,6 +179,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
 
   let start _rng _pclock _mclock _time s ctx =
     Lwt.catch (fun () ->
+        inc "pull";
         Git_kv.connect ctx (Key_gen.remote ()))
       (function
         | Invalid_argument err ->
@@ -142,6 +201,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
           Lwt.return None
         | `Signed_notify soa ->
           Logs.debug (fun m -> m "got notified, checking out %a" Fmt.(option ~none:(any "no soa") Dns.Soa.pp) soa);
+          inc "pull";
           Git_kv.pull store >>= function
           | Error (`Msg msg) ->
             Logs.err (fun m -> m "error %s while pulling git in notify, continuing with old data" msg);
