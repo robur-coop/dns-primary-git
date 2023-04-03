@@ -14,6 +14,10 @@ let ssh_key =
   let doc = Key.Arg.info ~doc:"Private ssh key (rsa:<seed> or ed25519:<b64-key>)." ["ssh-key"] in
   Key.(create "ssh-key" Arg.(opt (some string) None doc))
 
+let ssh_password =
+  let doc = Key.Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
+  Key.(create "ssh_password" Arg.(opt (some string) None doc))
+
 let authenticator =
   let doc = Key.Arg.info ~doc:"SSH authenticator." ["authenticator"] in
   Key.(create "authenticator" Arg.(opt (some string) None doc))
@@ -39,7 +43,7 @@ let git =
   let tcp = tcpv4v6_of_stackv4v6 stack in
   let git = mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
   merge_git_clients (git_tcp tcp git)
-    (merge_git_clients (git_ssh ~key:ssh_key ~authenticator tcp git)
+    (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator tcp git)
                        (git_http tcp git))
 
 let enable_monitoring =
