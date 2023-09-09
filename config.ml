@@ -4,7 +4,7 @@ open Mirage
 
 let remote_k =
   let doc = Key.Arg.info ~doc:"Remote git repository. Use '#' as a separator for a branch name." ["r"; "remote"] in
-  Key.(create "remote" Arg.(opt string "https://github.com/roburio/udns.git" doc))
+  Key.(create "remote" Arg.(opt string "https://github.com/robur-coop/udns.git" doc))
 
 let axfr =
   let doc = Key.Arg.info ~doc:"Allow unauthenticated zone transfer." ["axfr"] in

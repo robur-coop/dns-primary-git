@@ -10,8 +10,8 @@ The git remote is expected to contain a flat file hierarchy where each zone
 to be served is a separate file. HMAC secrets are stored as DNSKEY entries
 in `_keys` zones (i.e. `example.com._keys` or `_keys`).
 
-This can be used with [dns-secondary](https://github.com/roburio/dns-secondary),
-and [let's encrypt](https://github.com/roburio/dns-letsencrypt-secondary) for
+This can be used with [dns-secondary](https://github.com/robur-coop/dns-secondary),
+and [let's encrypt](https://github.com/robur-coop/dns-letsencrypt-secondary) for
 automated provisioning of let's encrypt certificates.
 
 ## Interoperability
@@ -59,7 +59,7 @@ To install this unikernel from source, you need to have
 The following steps will clone this git repository and compile the unikernel:
 
 ```bash
-$ git clone https://github.com/roburio/dns-primary-git.git
+$ git clone https://github.com/robur-coop/dns-primary-git.git
 $ mirage configure -t <your-favourite-target>
 $ make depend
 $ mirage build
