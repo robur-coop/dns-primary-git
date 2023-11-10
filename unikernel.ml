@@ -1,8 +1,46 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
-open Lwt.Infix
+module K = struct
+  open Cmdliner
+
+  let remote =
+    let doc = Arg.info ~doc:"Remote git repository. Use '#' as a separator for a branch name." ["r"; "remote"] in
+    Arg.(value & opt string "https://github.com/robur-coop/udns.git" doc) |> Mirage_runtime.key
+
+  let axfr =
+    let doc = Arg.info ~doc:"Allow unauthenticated zone transfer." ["axfr"] in
+    Arg.(value & flag doc) |> Mirage_runtime.key
+
+  let ssh_key =
+    let doc = Arg.info ~doc:"Private ssh key (rsa:<seed> or ed25519:<b64-key>)." ["ssh-key"] in
+    Arg.(value & opt (some string) None doc)
+
+  let ssh_password =
+    let doc = Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
+    Arg.(value & opt (some string) None doc)
+
+  let ssh_authenticator =
+    let doc = Arg.info ~doc:"SSH authenticator." ["authenticator"] in
+    Arg.(value & opt (some string) None doc)
+
+  let name =
+    let doc = Arg.info ~doc:"Name of the unikernel" [ "name" ] in
+    Arg.(value & opt string "ns.robur.coop" doc)
+
+  let ip =
+    Arg.conv ~docv:"IP" (Ipaddr.of_string, Ipaddr.pp)
+
+  let monitor =
+    let doc = Arg.info ~doc:"monitor host IP" ["monitor"] in
+    Arg.(value & opt (some ip) None doc)
+
+  let syslog =
+    let doc = Arg.info ~doc:"syslog host IP" [ "syslog" ] in
+    Arg.(value & opt (some ip) None doc)
+end
 
 module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
+  open Lwt.Infix
 
   module Store = Git_kv.Make(P)
 
@@ -180,11 +218,11 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
   let start _rng _pclock _mclock _time s ctx =
     Lwt.catch (fun () ->
         inc "pull";
-        Git_kv.connect ctx (Key_gen.remote ()))
+        Git_kv.connect ctx (K.remote ()))
       (function
         | Invalid_argument err ->
           Logs.err (fun m -> m "couldn't initialize git repository %s: %s"
-                       (Key_gen.remote ()) err);
+                       (K.remote ()) err);
           exit Mirage_runtime.argument_error
         | e -> raise e) >>= fun store ->
     load_zones None store >>= function
@@ -217,7 +255,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
               Some trie
       in
       let t =
-        let unauthenticated_zone_transfer = Key_gen.axfr () in
+        let unauthenticated_zone_transfer = K.axfr () in
         Dns_server.Primary.create ~keys ~unauthenticated_zone_transfer
           ~tsig_verify:Dns_tsig.verify ~tsig_sign:Dns_tsig.sign ~rng:R.generate
           trie

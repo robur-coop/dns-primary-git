@@ -2,25 +2,11 @@
 
 open Mirage
 
-let remote_k =
-  let doc = Key.Arg.info ~doc:"Remote git repository. Use '#' as a separator for a branch name." ["r"; "remote"] in
-  Key.(create "remote" Arg.(opt string "https://github.com/robur-coop/udns.git" doc))
+let ssh_key = Runtime_key.create "Unikernel.K.ssh_key"
 
-let axfr =
-  let doc = Key.Arg.info ~doc:"Allow unauthenticated zone transfer." ["axfr"] in
-  Key.(create "axfr" Arg.(flag doc))
+let ssh_password = Runtime_key.create "Unikernel.K.ssh_password"
 
-let ssh_key =
-  let doc = Key.Arg.info ~doc:"Private ssh key (rsa:<seed> or ed25519:<b64-key>)." ["ssh-key"] in
-  Key.(create "ssh-key" Arg.(opt (some string) None doc))
-
-let ssh_password =
-  let doc = Key.Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
-  Key.(create "ssh-password" Arg.(opt (some string) None doc))
-
-let authenticator =
-  let doc = Key.Arg.info ~doc:"SSH authenticator." ["authenticator"] in
-  Key.(create "authenticator" Arg.(opt (some string) None doc))
+let ssh_authenticator = Runtime_key.create "Unikernel.K.ssh_authenticator"
 
 let dns_handler =
   let packages = [
@@ -31,7 +17,6 @@ let dns_handler =
     package ~min:"4.3.1" "mirage-runtime";
   ] in
   foreign
-    ~keys:[ Key.v remote_k; Key.v axfr ]
     ~packages
     "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> stackv4v6 @-> git_client @-> job)
@@ -43,15 +28,15 @@ let git =
   let tcp = tcpv4v6_of_stackv4v6 stack in
   let git = mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
   merge_git_clients (git_tcp tcp git)
-    (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator tcp git)
+    (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator:ssh_authenticator tcp git)
                        (git_http tcp git))
 
 let enable_monitoring =
-  let doc = Key.Arg.info
+  let doc = Cmdliner.Arg.info
       ~doc:"Enable monitoring (only available for solo5 targets)"
       [ "enable-monitoring" ]
   in
-  Key.(create "enable-monitoring" Arg.(flag ~stage:`Configure doc))
+  Key.(create "enable-monitoring" Arg.(flag doc))
 
 let management_stack =
   if_impl
@@ -59,47 +44,39 @@ let management_stack =
     (generic_stackv4v6 ~group:"management" (netif ~group:"management" "management"))
     stack
 
-let name =
-  let doc = Key.Arg.info ~doc:"Name of the unikernel" [ "name" ] in
-  Key.(v (create "name" Arg.(opt string "ns.robur.coop" doc)))
+let (name : string Runtime_key.key) = Runtime_key.create "Unikernel.K.name"
 
 let monitoring =
-  let monitor =
-    let doc = Key.Arg.info ~doc:"monitor host IP" ["monitor"] in
-    Key.(v (create "monitor" Arg.(opt (some ip_address) None doc)))
-  in
+  let monitor = Runtime_key.create "Unikernel.K.monitor" in
   let connect _ modname = function
     | [ _ ; _ ; stack ] ->
       Fmt.str "Lwt.return (match %a with\
                | None -> Logs.warn (fun m -> m \"no monitor specified, not outputting statistics\")\
                | Some ip -> %s.create ip ~hostname:%a %s)"
-        Key.serialize_call monitor modname
-        Key.serialize_call name stack
+        Runtime_key.call monitor modname
+        Runtime_key.call name stack
     | _ -> assert false
   in
   impl
     ~packages:[ package "mirage-monitoring" ]
-    ~keys:[ name ; monitor ]
+    ~runtime_keys:[ Runtime_key.v name ; Runtime_key.v monitor ]
     ~connect "Mirage_monitoring.Make"
     (time @-> pclock @-> stackv4v6 @-> job)
 
 let syslog =
-  let syslog =
-    let doc = Key.Arg.info ~doc:"syslog host IP" ["syslog"] in
-    Key.(v (create "syslog" Arg.(opt (some ip_address) None doc)))
-  in
+  let syslog = Runtime_key.create "Unikernel.K.syslog" in
   let connect _ modname = function
     | [ _ ; stack ] ->
       Fmt.str "Lwt.return (match %a with\
                | None -> Logs.warn (fun m -> m \"no syslog specified, dumping on stdout\")\
                | Some ip -> Logs.set_reporter (%s.create %s ip ~hostname:%a ()))"
-        Key.serialize_call syslog modname stack
-        Key.serialize_call name
+        Runtime_key.call syslog modname stack
+        Runtime_key.call name
     | _ -> assert false
   in
   impl
     ~packages:[ package ~sublibs:["mirage"] ~min:"0.4.0" "logs-syslog" ]
-    ~keys:[ name ; syslog ]
+    ~runtime_keys:[ Runtime_key.v name ; Runtime_key.v syslog ]
     ~connect "Logs_syslog_mirage.Udp"
     (pclock @-> stackv4v6 @-> job)
 
