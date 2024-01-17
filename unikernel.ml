@@ -1,5 +1,17 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
+module K = struct
+  open Cmdliner
+
+  let remote =
+    let doc = Arg.info ~doc:"Remote git repository. Use '#' as a separator for a branch name." ["r"; "remote"] in
+    Arg.(value & opt string "https://github.com/robur-coop/udns.git" doc)
+
+  let axfr =
+    let doc = Arg.info ~doc:"Allow unauthenticated zone transfer." ["axfr"] in
+    Arg.(value & flag doc)
+end
+
 open Lwt.Infix
 
 module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
@@ -177,14 +189,13 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
 
   module D = Dns_server_mirage.Make(P)(M)(T)(S)
 
-  let start _rng _pclock _mclock _time s ctx =
+  let start _rng _pclock _mclock _time s ctx remote axfr =
     Lwt.catch (fun () ->
         inc "pull";
-        Git_kv.connect ctx (Key_gen.remote ()))
+        Git_kv.connect ctx remote)
       (function
         | Invalid_argument err ->
-          Logs.err (fun m -> m "couldn't initialize git repository %s: %s"
-                       (Key_gen.remote ()) err);
+          Logs.err (fun m -> m "couldn't initialize git repository %s: %s" remote err);
           exit Mirage_runtime.argument_error
         | e -> raise e) >>= fun store ->
     load_zones None store >>= function
@@ -217,8 +228,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MC
               Some trie
       in
       let t =
-        let unauthenticated_zone_transfer = Key_gen.axfr () in
-        Dns_server.Primary.create ~keys ~unauthenticated_zone_transfer
+        Dns_server.Primary.create ~keys ~unauthenticated_zone_transfer:axfr
           ~tsig_verify:Dns_tsig.verify ~tsig_sign:Dns_tsig.sign ~rng:R.generate
           trie
       in
