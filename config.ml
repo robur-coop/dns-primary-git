@@ -49,7 +49,7 @@ let git =
 
 let enable_monitoring =
   let doc = Key.Arg.info
-      ~doc:"Enable monitoring (only available for solo5 targets)"
+      ~doc:"Enable monitoring (syslog, metrics to influx, log level, statmemprof tracing)"
       [ "enable-monitoring" ]
   in
   Key.(create "enable-monitoring" Arg.(flag doc))
