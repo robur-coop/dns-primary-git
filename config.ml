@@ -1,4 +1,4 @@
-(* mirage >= 4.5.1 & < 4.6.0 *)
+(* mirage >= 4.6.0 & < 4.7.0 *)
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 open Mirage
 
@@ -40,9 +40,10 @@ let dns_handler =
 let stack = generic_stackv4v6 default_network
 
 let git =
-  let dns = generic_dns_client stack in
+  let he = generic_happy_eyeballs stack in
+  let dns = generic_dns_client stack he in
   let tcp = tcpv4v6_of_stackv4v6 stack in
-  let git = mimic_happy_eyeballs stack dns (generic_happy_eyeballs stack dns) in
+  let git = mimic_happy_eyeballs stack he dns in
   merge_git_clients (git_tcp tcp git)
     (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator tcp git)
                        (git_http tcp git))
