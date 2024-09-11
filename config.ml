@@ -1,4 +1,4 @@
-(* mirage >= 4.6.0 & < 4.7.0 *)
+(* mirage >= 4.7.0 & < 4.8.0 *)
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 open Mirage
 
