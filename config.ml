@@ -20,6 +20,14 @@ let authenticator =
      let doc = Arg.info ~doc:"SSH authenticator." ["authenticator"] in
       Arg.(value & opt (some string) None doc)|}
 
+let tls_authenticator =
+  Runtime_arg.create ~pos:__POS__
+    {|let open Cmdliner in
+      let doc = "TLS host authenticator. See git_http in lib/mirage/mirage.mli for a description of the format."
+     in
+     let doc = Arg.info ~doc ["tls-authenticator"] in
+     Arg.(value & opt (some string) None doc)|}
+
 let remote = runtime_arg ~pos:__POS__ "Unikernel.K.remote"
 let axfr = runtime_arg ~pos:__POS__ "Unikernel.K.axfr"
 
@@ -46,7 +54,7 @@ let git =
   let git = mimic_happy_eyeballs stack he dns in
   merge_git_clients (git_tcp tcp git)
     (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator tcp git)
-                       (git_http tcp git))
+                       (git_http ~authenticator:tls_authenticator tcp git))
 
 let enable_monitoring =
   let doc = Key.Arg.info
