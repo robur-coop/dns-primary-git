@@ -5,11 +5,11 @@ module K = struct
 
   let remote =
     let doc = Arg.info ~doc:"Remote git repository. Use '#' as a separator for a branch name." ["r"; "remote"] in
-    Arg.(value & opt string "https://github.com/robur-coop/udns.git" doc)
+    Mirage_runtime.register_arg Arg.(value & opt string "https://github.com/robur-coop/udns.git" doc)
 
   let axfr =
     let doc = Arg.info ~doc:"Allow unauthenticated zone transfer." ["axfr"] in
-    Arg.(value & flag doc)
+    Mirage_runtime.register_arg Arg.(value & flag doc)
 end
 
 open Lwt.Infix
@@ -189,7 +189,8 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK) (M : Mira
 
   module D = Dns_server_mirage.Make(P)(M)(T)(S)
 
-  let start _rng _pclock _mclock _time s ctx remote axfr =
+  let start _rng _pclock _mclock _time s ctx =
+    let remote = K.remote () in
     Lwt.catch (fun () ->
         inc "pull";
         Git_kv.connect ctx remote)
@@ -228,7 +229,7 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK) (M : Mira
               Some trie
       in
       let t =
-        Dns_server.Primary.create ~keys ~unauthenticated_zone_transfer:axfr
+        Dns_server.Primary.create ~keys ~unauthenticated_zone_transfer:(K.axfr ())
           ~tsig_verify:Dns_tsig.verify ~tsig_sign:Dns_tsig.sign ~rng:R.generate
           trie
       in
