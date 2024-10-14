@@ -1,35 +1,6 @@
-(* mirage >= 4.7.0 & < 4.8.0 *)
+(* mirage >= 4.8.0 & < 4.9.0 *)
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 open Mirage
-
-let ssh_key =
-  Runtime_arg.create ~pos:__POS__
-    {|let open Cmdliner in
-      let doc = Arg.info ~doc:"Private ssh key (rsa:<seed> or ed25519:<b64-key>)." ["ssh-key"] in
-      Arg.(value & opt (some string) None doc)|}
-
-let ssh_password =
-  Runtime_arg.create ~pos:__POS__
-    {|let open Cmdliner in
-     let doc = Arg.info ~doc:"The private SSH password." [ "ssh-password" ] in
-      Arg.(value & opt (some string) None doc)|}
-
-let authenticator =
-  Runtime_arg.create ~pos:__POS__
-    {|let open Cmdliner in
-     let doc = Arg.info ~doc:"SSH authenticator." ["authenticator"] in
-      Arg.(value & opt (some string) None doc)|}
-
-let tls_authenticator =
-  Runtime_arg.create ~pos:__POS__
-    {|let open Cmdliner in
-      let doc = "TLS host authenticator. See git_http in lib/mirage/mirage.mli for a description of the format."
-     in
-     let doc = Arg.info ~doc ["tls-authenticator"] in
-     Arg.(value & opt (some string) None doc)|}
-
-let remote = runtime_arg ~pos:__POS__ "Unikernel.K.remote"
-let axfr = runtime_arg ~pos:__POS__ "Unikernel.K.axfr"
 
 let dns_handler =
   let packages = [
@@ -40,7 +11,6 @@ let dns_handler =
     package ~min:"4.3.1" "mirage-runtime";
   ] in
   main
-    ~runtime_args:[ remote; axfr ]
     ~packages
     ~pos:__POS__ "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> stackv4v6 @-> git_client @-> job)
@@ -53,8 +23,7 @@ let git =
   let tcp = tcpv4v6_of_stackv4v6 stack in
   let git = mimic_happy_eyeballs stack he dns in
   merge_git_clients (git_tcp tcp git)
-    (merge_git_clients (git_ssh ~key:ssh_key ~password:ssh_password ~authenticator tcp git)
-                       (git_http ~authenticator:tls_authenticator tcp git))
+    (merge_git_clients (git_ssh tcp git) (git_http tcp git))
 
 let enable_monitoring =
   let doc = Key.Arg.info
@@ -74,7 +43,7 @@ let name =
     {|let doc = Cmdliner.Arg.info ~doc:"Name of the unikernel"
         ~docs:Mirage_runtime.s_log [ "name" ]
       in
-      Cmdliner.Arg.(value & opt string "a.ns.robur.coop" doc)|}
+      Cmdliner.Arg.(value & opt string "ns.robur.coop" doc)|}
 
 let monitoring =
   let monitor = Runtime_arg.(v (monitor None)) in
