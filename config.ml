@@ -1,4 +1,4 @@
-(* mirage >= 4.8.0 & < 4.9.0 *)
+(* mirage >= 4.9.0 & < 4.10.0 *)
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 open Mirage
 
@@ -13,7 +13,7 @@ let dns_handler =
   main
     ~packages
     ~pos:__POS__ "Unikernel.Main"
-    (random @-> pclock @-> mclock @-> time @-> stackv4v6 @-> git_client @-> job)
+    (stackv4v6 @-> git_client @-> job)
 
 let stack = generic_stackv4v6 default_network
 
@@ -48,7 +48,7 @@ let name =
 let monitoring =
   let monitor = Runtime_arg.(v (monitor None)) in
   let connect _ modname = function
-    | [ _ ; _ ; stack ; name ; monitor ] ->
+    | [ stack ; name ; monitor ] ->
       code ~pos:__POS__
         "Lwt.return (match %s with\
          | None -> Logs.warn (fun m -> m \"no monitor specified, not outputting statistics\")\
@@ -57,15 +57,15 @@ let monitoring =
     | _ -> assert false
   in
   impl
-    ~packages:[ package "mirage-monitoring" ]
+    ~packages:[ package ~min:"0.0.6" "mirage-monitoring" ]
     ~runtime_args:[ name ; monitor ]
     ~connect "Mirage_monitoring.Make"
-    (time @-> pclock @-> stackv4v6 @-> job)
+    (stackv4v6 @-> job)
 
 let syslog =
   let syslog = Runtime_arg.(v (syslog None)) in
   let connect _ modname = function
-    | [ _ ; stack ; name ; syslog ] ->
+    | [ stack ; name ; syslog ] ->
       code ~pos:__POS__
         "Lwt.return (match %s with\
          | None -> Logs.warn (fun m -> m \"no syslog specified, dumping on stdout\")\
@@ -74,25 +74,25 @@ let syslog =
     | _ -> assert false
   in
   impl
-    ~packages:[ package ~sublibs:["mirage"] ~min:"0.4.0" "logs-syslog" ]
+    ~packages:[ package ~sublibs:["mirage"] ~min:"0.5.0" "logs-syslog" ]
     ~runtime_args:[ name ; syslog ]
     ~connect "Logs_syslog_mirage.Udp"
-    (pclock @-> stackv4v6 @-> job)
+    (stackv4v6 @-> job)
 
-let optional_monitoring time pclock stack =
+let optional_monitoring stack =
   if_impl (Key.value enable_monitoring)
-    (monitoring $ time $ pclock $ stack)
+    (monitoring $ stack)
     noop
 
-let optional_syslog pclock stack =
+let optional_syslog stack =
   if_impl (Key.value enable_monitoring)
-    (syslog $ pclock $ stack)
+    (syslog $ stack)
     noop
 
 let () =
   register "primary-git"
     [
-      optional_syslog default_posix_clock management_stack ;
-      optional_monitoring default_time default_posix_clock management_stack ;
-      dns_handler $ default_random $ default_posix_clock $ default_monotonic_clock $ default_time $ stack $ git
+      optional_syslog management_stack ;
+      optional_monitoring management_stack ;
+      dns_handler $ stack $ git
     ]
