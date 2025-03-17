@@ -14,9 +14,7 @@ end
 
 open Lwt.Infix
 
-module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK) (M : Mirage_clock.MCLOCK) (T : Mirage_time.S) (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
-
-  module Store = Git_kv.Make(P)
+module Main (S : Tcpip.Stack.V4V6) (_ : sig end) = struct
 
   let inc =
     let create ~f =
@@ -71,9 +69,9 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK) (M : Mira
        add src (fun x -> x) (fun d -> d ()))
 
   let zones store =
-    Store.list store Mirage_kv.Key.empty >|= function
+    Git_kv.list store Mirage_kv.Key.empty >|= function
     | Error e ->
-      Logs.warn (fun m -> m "error %a while listing store" Store.pp_error e);
+      Logs.warn (fun m -> m "error %a while listing store" Git_kv.pp_error e);
       []
     | Ok files ->
       List.fold_left (fun acc (name, kind) ->
@@ -88,10 +86,10 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK) (M : Mira
   let load_zones old_trie store =
     zones store >>= fun zone_keys ->
     Lwt_list.fold_left_s (fun acc key ->
-        Store.get store key >|= function
+        Git_kv.get store key >|= function
         | Error e ->
           Logs.warn (fun m -> m "error %a while retrieving %a from store"
-                        Store.pp_error e Mirage_kv.Key.pp key);
+                        Git_kv.pp_error e Mirage_kv.Key.pp key);
           acc
         | Ok data -> (Mirage_kv.Key.basename key, data) :: acc)
       [] zone_keys >|= fun bindings ->
@@ -161,15 +159,15 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK) (M : Mira
     set_zone_counter `Push (List.length zones);
     set_zone_counter `Active (List.length zones);
     inc "push";
-    Store.change_and_push store ~author ~message
+    Git_kv.change_and_push store ~author ~message
       (fun s ->
          Domain_name.Set.fold (fun name acc ->
              acc >>= fun () ->
              let key = Mirage_kv.Key.v (Domain_name.to_string name) in
-             Store.remove s key >|= function
+             Git_kv.remove s key >|= function
              | Ok () -> ()
              | Error e -> Logs.err (fun m -> m "error %a while removing %a"
-                                       Store.pp_write_error e Mirage_kv.Key.pp key))
+                                       Git_kv.pp_write_error e Mirage_kv.Key.pp key))
            old_zones Lwt.return_unit >>= fun () ->
          Lwt_list.iter_s (fun zone ->
              match Dns_server.text zone data with
@@ -177,19 +175,19 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK) (M : Mira
                Logs.err (fun m -> m "error while converting zone %a: %s" Domain_name.pp zone msg) ;
                Lwt.return_unit
              | Ok data ->
-               Store.set s (Mirage_kv.Key.v (Domain_name.to_string zone)) data >|= function
+               Git_kv.set s (Mirage_kv.Key.v (Domain_name.to_string zone)) data >|= function
                | Ok () -> ()
                | Error e ->
                  Logs.err (fun m -> m "error while writing %a to store: %a"
-                              Domain_name.pp zone Store.pp_write_error e))
+                              Domain_name.pp zone Git_kv.pp_write_error e))
            zones) >|= function
     | Ok () -> ()
     | Error e ->
-      Logs.err (fun m -> m "change_and_push failed with %a" Store.pp_write_error e)
+      Logs.err (fun m -> m "change_and_push failed with %a" Git_kv.pp_write_error e)
 
-  module D = Dns_server_mirage.Make(P)(M)(T)(S)
+  module D = Dns_server_mirage.Make(S)
 
-  let start _rng _pclock _mclock _time s ctx =
+  let start s ctx =
     let remote = K.remote () in
     Lwt.catch (fun () ->
         inc "pull";
@@ -230,8 +228,8 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK) (M : Mira
       in
       let t =
         Dns_server.Primary.create ~keys ~unauthenticated_zone_transfer:(K.axfr ())
-          ~tsig_verify:Dns_tsig.verify ~tsig_sign:Dns_tsig.sign ~rng:R.generate
-          trie
+          ~tsig_verify:Dns_tsig.verify ~tsig_sign:Dns_tsig.sign
+          ~rng:Mirage_crypto_rng.generate trie
       in
       D.primary ~on_update ~on_notify s t ;
       S.listen s
