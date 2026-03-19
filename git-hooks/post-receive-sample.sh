@@ -7,6 +7,17 @@
 
 PRIMARY_IP="127.0.0.1"
 
+REMOTE_IP=${SSH_CLIENT%% *}
+if [ -z "$REMOTE_IP" ]; then
+   echo "ssh client IP not found" >&2
+   exit 2
+fi
+
+if [ "$REMOTE_IP" = "$PRIMARY_IP" ]; then
+    echo "update from primary, not sending a notify"
+    exit 0
+fi
+
 while read -r oldrev newrev _refname; do
     ZONE=
     for file in $(git diff --name-only "$oldrev" "$newrev"); do
