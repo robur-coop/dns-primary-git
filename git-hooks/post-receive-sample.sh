@@ -41,6 +41,6 @@ while read -r oldrev newrev _refname; do
     fi;
     KEY_NAME=$(echo "$KEY" | cut -d ' ' -f 1)
     KEY_VAL=$(echo "$KEY" | rev | cut -d ' ' -f 1 | rev)
-    /usr/local/bin/onotify --key="$KEY_NAME":SHA256:"$KEY_VAL" "$PRIMARY_IP" "$ZONE"
+    onotify --key="$KEY_NAME":SHA256:"$KEY_VAL" "$PRIMARY_IP" "$ZONE"
     echo "notified \"$PRIMARY_IP\" for update of \"$ZONE\""
 done

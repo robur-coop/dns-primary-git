@@ -25,7 +25,7 @@ while read -r oldrev newrev _refname; do
             echo "checking zone $file"
             git show "$oldrev":"$file" > "$old_temp_file"
             git show "$newrev":"$file" > "$temp_file"
-            /usr/local/bin/ozone --color=always --old "$old_temp_file" --zone-name "$file" "$temp_file"
+            ozone --color=always --old "$old_temp_file" --zone-name "$file" "$temp_file"
         fi
     done
 done
