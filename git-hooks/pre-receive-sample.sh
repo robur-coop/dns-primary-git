@@ -43,5 +43,6 @@ while read -r oldrev newrev _refname; do
     # all other files (not Added, Modified, Copied, Renamed, Deleted)
     git diff --diff-filter=amcrd --name-only "$oldrev" "$newrev" | while read -r file; do
         echo "don't know how to deal with $file"
+        exit 1
     done
 done
