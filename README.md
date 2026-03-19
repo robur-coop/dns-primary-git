@@ -14,6 +14,14 @@ This can be used with [dns-secondary](https://github.com/robur-coop/dns-secondar
 and [let's encrypt](https://github.com/robur-coop/dns-letsencrypt-secondary) for
 automated provisioning of let's encrypt certificates.
 
+## Git hooks
+
+For validation and notification, you can use git hooks. Install the `dns-cli` opam package (also provided at https://builds.robur.coop/job/dns-cli).
+
+To validate a zone before a commit is accepted, install the file `git-hooks/pre-receive-sample.sh` in this repository as `hooks/pre-receive`. It will use `ozone` to check the old and new zone file.
+
+To notify the primary name server when an update is pushed, install the file `git-hooks/post-receive-sample.sh` in this repository as `hooks/post-receive`. It will use `onotify` to notify the primary git server. Please note that you need to set the PRIMARY_IP in the script.
+
 ## Interoperability
 
 Considering you have a `_keys` file with an example HMAC-SHA256 key:
