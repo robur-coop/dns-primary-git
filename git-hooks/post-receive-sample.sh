@@ -20,7 +20,7 @@ fi
 
 while read -r oldrev newrev _refname; do
     ZONE=
-    for file in $(git diff --name-only "$oldrev" "$newrev"); do
+    for file in $(git diff --diff-filter=AMCR --name-only "$oldrev" "$newrev"); do
         if [ "$file" = "_keys" ]; then
             # exclude the _keys zone
             continue
@@ -36,11 +36,11 @@ while read -r oldrev newrev _refname; do
         KEY=$(echo "$KEYS" | grep -e -E '\._update\. |\._transfer\. |\._notify\. ' | head -1)
     fi
     if [ $? -eq 1 ]; then
-        echo "no key found for \"$ZONE\" (or root)";
+        echo "no key found for $ZONE (or root)";
         exit 1
     fi;
     KEY_NAME=$(echo "$KEY" | cut -d ' ' -f 1)
     KEY_VAL=$(echo "$KEY" | rev | cut -d ' ' -f 1 | rev)
     onotify --key="$KEY_NAME":SHA256:"$KEY_VAL" "$PRIMARY_IP" "$ZONE"
-    echo "notified \"$PRIMARY_IP\" for update of \"$ZONE\""
+    echo "notified $PRIMARY_IP for update of $ZONE"
 done

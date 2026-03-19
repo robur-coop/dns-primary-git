@@ -17,8 +17,8 @@ cleanup () {
 trap cleanup EXIT
 
 while read -r oldrev newrev _refname; do
-    # added files
-    git diff --diff-filter=A --name-only "$oldrev" "$newrev" | while read -r file; do
+    # added, copied, renamed files
+    git diff --diff-filter=ACR --name-only "$oldrev" "$newrev" | while read -r file; do
         if [ "$file" = "_keys" ]; then
             # exclude the _keys zone
             continue
@@ -39,5 +39,9 @@ while read -r oldrev newrev _refname; do
             git show "$newrev":"$file" > "$temp_file"
             ozone --color=always --old "$old_temp_file" --zone-name "$file" "$temp_file"
         fi
+    done
+    # all other files (not Added, Modified, Copied, Renamed, Deleted)
+    git diff --diff-filter=amcrd --name-only "$oldrev" "$newrev" | while read -r file; do
+        echo "don't know how to deal with $file"
     done
 done
